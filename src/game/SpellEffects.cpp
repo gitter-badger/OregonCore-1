@@ -49,6 +49,7 @@
 #include "CellImpl.h"
 #include "GridNotifiers.h"
 #include "ScriptMgr.h"
+#include "GameObjectAI.h"
 #include "InstanceData.h"
 #include "MoveSplineInit.h"
 
@@ -3229,11 +3230,14 @@ void Spell::SendLoot(uint64 guid, LootType loottype)
         if (sScriptMgr.GOHello(player, gameObjTarget))
             return;
 
+        if (gameObjTarget->AI()->GossipHello(player))
+            return;
+
         switch (gameObjTarget->GetGoType())
         {
         case GAMEOBJECT_TYPE_DOOR:
         case GAMEOBJECT_TYPE_BUTTON:
-            gameObjTarget->UseDoorOrButton();
+            gameObjTarget->UseDoorOrButton(0, false, player);
             player->GetMap()->ScriptsStart(sGameObjectScripts, gameObjTarget->GetDBTableGUIDLow(), player, gameObjTarget);
             return;
 

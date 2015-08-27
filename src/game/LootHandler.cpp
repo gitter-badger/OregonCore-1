@@ -373,7 +373,7 @@ void WorldSession::DoLootRelease(uint64 lguid)
         }
         else
             // not fully looted object
-            go->SetLootState(GO_ACTIVATED);
+            go->SetLootState(GO_ACTIVATED, player);
     }
     else if (IS_CORPSE_GUID(lguid))        // ONLY remove insignia at BG
     {

@@ -17,10 +17,12 @@
 
 #include "Common.h"
 #include "QuestDef.h"
+#include "GameObjectAI.h"
 #include "GameObject.h"
 #include "ObjectMgr.h"
 #include "PoolMgr.h"
 #include "SpellMgr.h"
+#include "ScriptMgr.h"
 #include "Spell.h"
 #include "UpdateMask.h"
 #include "Opcodes.h"
@@ -33,13 +35,14 @@
 #include "GridNotifiers.h"
 #include "GridNotifiersImpl.h"
 #include "CellImpl.h"
+#include "CreatureAISelector.h"
 #include "InstanceData.h"
 #include "BattleGround.h"
 #include "Util.h"
 #include "OutdoorPvPMgr.h"
 #include "BattleGroundAV.h"
 
-GameObject::GameObject() : WorldObject()
+GameObject::GameObject() : WorldObject(), m_AI(NULL)
 {
     m_objectType |= TYPEMASK_GAMEOBJECT;
     m_objectTypeId = TYPEID_GAMEOBJECT;
@@ -63,6 +66,20 @@ GameObject::GameObject() : WorldObject()
 
 GameObject::~GameObject()
 {
+    delete m_AI;
+}
+
+bool GameObject::AIM_Initialize()
+{
+    delete m_AI;
+
+    m_AI = FactorySelector::SelectGameObjectAI(this);
+
+    if (!m_AI)
+        return false;
+
+    m_AI->InitializeAI();
+    return true;
 }
 
 void GameObject::CleanupsBeforeDelete()
@@ -184,6 +201,8 @@ bool GameObject::Create(uint32 guidlow, uint32 name_id, Map* map, float x, float
 
     SetZoneScript();
 
+    AIM_Initialize();
+
     return true;
 }
 
@@ -194,6 +213,11 @@ void GameObject::Update(uint32 diff)
         //((Transport*)this)->Update(p_time);
         return;
     }
+
+    if (AI())
+        AI()->UpdateAI(diff);
+    else if (!AIM_Initialize())
+        sLog.outError("Could not initialize GameObjectAI");
 
     switch (m_lootState)
     {
@@ -907,7 +931,7 @@ void GameObject::ResetDoorOrButton()
     m_cooldownTime = 0;
 }
 
-void GameObject::UseDoorOrButton(uint32 time_to_restore, bool alternative /* = false */)
+void GameObject::UseDoorOrButton(uint32 time_to_restore, bool alternative /* = false */, Unit* user /*=NULL*/)
 {
     if (m_lootState != GO_READY)
         return;
@@ -916,7 +940,7 @@ void GameObject::UseDoorOrButton(uint32 time_to_restore, bool alternative /* = f
         time_to_restore = GetGOInfo()->GetAutoCloseTime();
 
     SwitchDoorOrButton(true, alternative);
-    SetLootState(GO_ACTIVATED);
+    SetLootState(GO_ACTIVATED, user);
 
     m_cooldownTime = time_to_restore ? (time(NULL) + time_to_restore) : 0;
 }
@@ -949,6 +973,15 @@ void GameObject::Use(Unit* user)
     uint32 spellId = 0;
     bool triggered = false;
 
+    if (Player* playerUser = user->ToPlayer())
+    {
+        if (sScriptMgr.GOHello(playerUser, this))
+            return;
+
+        if (AI()->GossipHello(playerUser))
+            return;
+    }
+
     // If cooldown data present in template
     if (uint32 cooldown = GetCooldown())
     {
@@ -963,7 +996,7 @@ void GameObject::Use(Unit* user)
     case GAMEOBJECT_TYPE_DOOR:                          //0
     case GAMEOBJECT_TYPE_BUTTON:                        //1
         //doors/buttons never really despawn, only reset to default state/flags
-        UseDoorOrButton();
+        UseDoorOrButton(0, false, user);
 
         // activate script
         GetMap()->ScriptsStart(sGameObjectScripts, GetDBTableGUIDLow(), spellCaster, this);
@@ -1072,7 +1105,7 @@ void GameObject::Use(Unit* user)
             }
 
             SetFlag(GAMEOBJECT_FLAGS, GO_FLAG_IN_USE);
-            SetLootState(GO_ACTIVATED);
+            SetLootState(GO_ACTIVATED, user);
 
             // this appear to be ok, however others exist in addition to this that should have custom (ex: 190510, 188692, 187389)
             if (info->goober.customAnim)
@@ -1425,6 +1458,13 @@ void GameObject::Use(Unit* user)
         CastSpell(user, spellId);
 }
 
+void GameObject::SetLootState(LootState s, Unit* unit)
+{
+    m_lootState = s;
+
+    AI()->OnStateChanged(s, unit);
+}
+
 void GameObject::CastSpell(Unit* target, uint32 spellId, bool triggered /*= true*/)
 {
     SpellEntry const* spellProto = sSpellStore.LookupEntry(spellId);
@@ -1489,4 +1529,12 @@ void GameObject::UpdateRotationFields(float rotation2 /*=0.0f*/, float rotation3
 
     SetFloatValue(GAMEOBJECT_ROTATION+2, rotation2);
     SetFloatValue(GAMEOBJECT_ROTATION+3, rotation3);
+}
+
+std::string GameObject::GetAIName() const
+{
+    if (m_goInfo)
+        return m_goInfo->AIName;
+
+    return "";
 }
